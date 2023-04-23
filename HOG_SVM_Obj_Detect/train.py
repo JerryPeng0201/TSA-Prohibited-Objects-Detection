@@ -1,55 +1,68 @@
+import cv2
 import numpy as np
 from sklearn.svm import SVC
-from skimage import feature
-from sklearn.metrics import average_precision_score
-from dataloader import dataloader
+from sklearn.model_selection import GridSearchCV
+from skimage.feature import hog
+import matplotlib.pyplot as plt
+from sklearn.metrics import precision_recall_curve, auc
+from sklearn.metrics import accuracy_score, make_scorer
 
 
-def hog_feature_extractor(img):
-    """This function computes the HOG feature vector for a given image
+def train(x_train_hog, y_train):
+    params_grid = [
+        {'C': [1, 10, 100], 'kernel': ['linear']},
+        {'C': [1, 10, 100], 'gamma': [0.1, 0.01], 'kernel': ['rbf']}
+    ]
 
-    Args:
-        img (_type_): _description_
-
-    Returns:
-        _type_: _description_
-    """
-    # Convert image to grayscale
-    gray = np.array(img.convert('L'))
-    # Compute HOG features
-    hog_feats = feature.hog(gray, orientations=9, pixels_per_cell=(8, 8),
-                            cells_per_block=(2, 2), transform_sqrt=True, block_norm='L2-Hys')
-    return hog_feats
+    svc = SVC()
+    clf = GridSearchCV(svc, params_grid, cv=5)
+    clf.fit(x_train_hog, y_train)
+    return clf
 
 
-def train(root, annotation, epochs=10):
-    train_loader, val_loader = dataloader(root, annotation, train=True)
+def compute_classwise_ap_and_map(y_true, y_pred, num_classes=12):
+    aps = []
 
-    # Loop over multiple epochs
-    for epoch in range(epochs):
-        # Loop over train dataloader
-        for batch_idx, (imgs, targets) in enumerate(train_loader):
-            # Extract HOG features and labels for batch
-            batch_feats = []
-            batch_labels = []
-            for i in range(len(imgs)):
-                hog_feats = hog_feature_extractor(imgs[i])
-                batch_feats.append(hog_feats)
-                batch_labels.extend(targets[i]['labels'].tolist())
+    for class_id in range(num_classes):
+        # Binary classification of the current class
+        y_true_binary = (y_true == class_id).astype(int)
+        y_pred_binary = (y_pred == class_id).astype(int)
 
-            # Train SVM classifier on batch
-            clf = SVC(kernel='linear')
-            clf.fit(batch_feats, batch_labels)
+        # Calculate precision-recall curve and AUC (Average Precision)
+        precision, recall, _ = precision_recall_curve(y_true_binary, y_pred_binary)
+        ap = auc(recall, precision)
+        aps.append(ap)
 
-            # Evaluate on validation set after every 10 batches
-            if batch_idx % 10 == 0:
-                val_feats = []
-                val_labels = []
-                for img, target in val_loader:
-                    hog_feats = hog_feature_extractor(img)
-                    val_feats.append(hog_feats)
-                    val_labels.extend(target['labels'].tolist())
+    map_score = np.mean(aps)
 
-                val_preds = clf.predict(val_feats)
-                ap = average_precision_score(val_labels, val_preds)
-                print('Epoch: {}, Batch: {}, Average Precision: {:.4f}'.format(epoch, batch_idx, ap))
+    return aps, map_score
+
+
+def plot_classwise_ap(classwise_ap):
+    num_classes = len(classwise_ap)
+    class_labels = [f'Class {i + 1}' for i in range(num_classes)]
+    class_names = ['Baton', 'Pliers', 'Hammer', 'Powerbank', 'Scissors', 'Wrench', 'Gun', 'Bullet', 'Sprayer', 'HandCuffs', 'Knife', 'Lighter']
+
+    fig, ax = plt.subplots()
+    ax.bar(class_labels, classwise_ap)
+
+    ax.set_xlabel('Classes')
+    ax.set_ylabel('Average Precision')
+    ax.set_title('Class-wise Average Precision')
+    plt.xticks(np.arange(num_classes), class_names, rotation='vertical')
+
+    # Save the chart as a PDF
+    output_file="/scratch/jp4906/TSA-Prohibited-Obj-Detection/HOG_SVM_Obj_Detect/ap_chart.pdf"
+    plt.savefig(output_file, format='pdf')
+
+
+def evaluation(x_test_hog, y_test, clf):
+    # Generate the prediction
+    y_pred = clf.predict(x_test_hog)
+
+    # Claculate class-wise AP and mAP
+    classwise_ap, map_score = compute_classwise_ap_and_map(y_test, y_pred)
+    print("mAP Score: {}".format(map_score))
+
+    # Plot the class-wise AP
+    plot_classwise_ap(classwise_ap)

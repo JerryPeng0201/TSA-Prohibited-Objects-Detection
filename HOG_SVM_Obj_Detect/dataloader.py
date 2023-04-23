@@ -1,94 +1,64 @@
+import os
+import cv2
 import numpy as np
-import torch
-from torch.utils import data
-from torchvision.datasets import CocoDetection
+from skimage.feature import hog
+from pycocotools.coco import COCO
 
 
-class PidrayDataset(data.Dataset):
-    def __init__(self, root, annotation, transforms=None):
-        """
-        Args:
-            root (String): dataset folder address
-            annotation (String): annotation files address
-            transforms (torch.transforms, optional): Transformer for the input data. Defaults to None.
-        """
-        self.root = root
-        self.annotation = annotation
-        self.transforms = transforms
-        self.coco = CocoDetection(root=root, annFile=annotation, transform=transforms)
+class PIDrayDataset:
+    def __init__(self, annotation_path, img_dir, resize_shape=(64,64), debug_mode=False):
+        self.img_dir = img_dir
+        self.coco = COCO(annotation_path)
+        self.ids = self.coco.getImgIds()
+        self.images = self.coco.loadImgs(self.ids)
+        self.resize_shape = resize_shape
+        self.debug_mode = debug_mode
     
-
-    def __getitem__(self, index):
-        image, target = self.coco[index]
-        bboxes = []
+    
+    def parse_data(self):
+        hog_features = []
         labels = []
 
-        for obj in target:
-            # Convert class label to index
-            label = self.class_map[obj['category_id']]
-            bbox = obj['bbox']
-            # COCO format: [x, y, width, height]
-            # Convert to PyTorch format: [ymin, xmin, ymax, xmax]
-            ymin, xmin, ymax, xmax = bbox[1], bbox[0], bbox[1] + bbox[3], bbox[0] + bbox[2]
-            bboxes.append([xmin, ymin, xmax, ymax])
-            labels.append(label)
+        for i, image in enumerate(self.images):
+            if i % 1000 == 0:
+                print("Loading images from No.{} to No.{}".format(i+1, i+1000))
+
+            # Read each image
+            img_path = os.path.join(self.img_dir, image['file_name'])
+            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+
+            if img is None:
+                continue
+            
+            # Load annotations
+            ann_ids = self.coco.getAnnIds(imgIds=image['id'])
+            anns = self.coco.loadAnns(ann_ids)
+
+            # pase annotations data
+            for i, ann in enumerate(anns):
+                bbox = ann['bbox']
+                x, y, w, h = [int(coord) for coord in bbox]
+                class_id = ann['category_id']
+                # Label the roi on the image
+                roi = img[y:y+h, x:x+w]
+                try:
+                    resized_img = cv2.resize(roi, self.resize_shape)
+                except cv2.error as e:
+                    print(f"Error resizing image (ID: {i}): {e}")
+                    continue
+                #resized_img = cv2.resize(roi, self.resize_shape)
+
+                # HOG feature extraction
+                fd = hog(resized_img, orientations=9, pixels_per_cell=(8, 8), cells_per_block=(2, 2), transform_sqrt=True)
+
+                # Update the output
+                hog_features.append(fd)
+                labels.append(class_id)
+
+            # Debugging?
+            if self.debug_mode and i == 999:
+                print("You are using debugging mode.")
+                break
         
-        boxes = torch.as_tensor(boxes, dtype=torch.float32)
-        labels = torch.as_tensor(labels, dtype=torch.int64)
-        areas = torch.as_tensor(areas, dtype=torch.float32)
-        image_id = torch.tensor([target[0]['image_id']])
-        target = {
-            'boxes': boxes,
-            'labels': labels,
-            'image_id': image_id,
-            'area': areas,
-            'iscrowd': torch.zeros((len(target),), dtype=torch.int64)
-        }
-
-        return image, target
-
-
-    def __len__(self):
-        return len(self.coco)
-
-
-def dataloader(root, annotation, train=False):
-    """This function loads and prepares the data for the PyTorch model. 
-    If the train flag is True, the dataset is split into training and validation sets using torch.utils.data.random_split. 
-    The training dataset is passed to a PyTorch DataLoader train_loader, which batches the data into groups of 64 and shuffles them.
-    Similarly, the validation dataset is passed to val_loader.
-    When the train flag is False, the test dataset is loaded into a PyTorch DataLoader called test_loader,
-    which is not shuffled since this is not needed for testing.
-
-    Args:
-        root (String): The root directory of the dataset
-        annotation (String): The path to the annotation file
-        train (bool, optional): A boolean flag that specifies whether to prepare the data for training or testing. Defaults to False.
-
-    Returns:
-        torch.Dataloader: processed dataloader
-    """
-    # Initialize the transforms, only for train dataset
-    transforms = transforms.Compose([
-        transforms.Resize(320),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    ])
-
-    # Load the dataset
-    dataset = PidrayDataset(root=root, annotation=annotation, transforms=transforms)
-    if len(dataset) == 0:
-        raise ValueError("Dataset is empty")
-
-    if train:
-        train_size = int(0.8 * len(dataset))
-        val_size = len(dataset) - train_size
-        train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-        train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=64, shuffle=True)
-        val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=64, shuffle=False)
-        
-        return train_loader, val_loader
-    
-    test_loader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=False)
-    return test_loader
-
+        return np.array(hog_features), np.array(labels)
+            

@@ -38,4 +38,4 @@ $ python main.py
 Please change the address paths in the files when you run the codes.
 
 ## Notice
-This project is not finished yet. We are still running and testing for HOG. More information will be provided later.
+Due to GitHub size limitation, the trained HOG+SVM model is not be provided
