@@ -35,7 +35,14 @@ $ cd HOG_SVM_Obj_Detect
 $ python main.py
 ```
 
+### HOGgles
+## Usage
+```
+$ cd HOGgles
+$ python hoggles.py
+```
+
 Please change the address paths in the files when you run the codes.
 
 ## Notice
-Due to GitHub size limitation, the trained HOG+SVM model is not be provided
+Due to GitHub size limitation, all trained models are not be provided
