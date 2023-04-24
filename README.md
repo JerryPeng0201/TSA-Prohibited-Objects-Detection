@@ -35,8 +35,7 @@ $ cd HOG_SVM_Obj_Detect
 $ python main.py
 ```
 
-### HOGgles
-## Usage
+For HOGgles, please run the following commands to visualize the image and hog image
 ```
 $ cd HOGgles
 $ python hoggles.py
